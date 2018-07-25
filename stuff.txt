@@ -1,0 +1,6 @@
+hello
+--comment
+this
+is
+a
+file!
