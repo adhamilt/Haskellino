@@ -1,73 +1,160 @@
+--Parser based on:
+--http://dev.stephendiehl.com/fun/002_parsers.html
+
+
 module Parser where
 
 import Data.Char
-import Data.List
-import Data.Maybe
+import Control.Monad
+import Control.Applicative
+
+newtype Parser a = Parser {parse :: String -> [(a,String)]}
 
 
-parse :: [String]->[String]
-parse x = stripComments x
+--Todo add line and error reporting
+runParser :: Parser a -> String -> a
+runParser m s =
+  case parse m s of
+    [(res, [])] -> res
+    [(_, rs)]   -> error "Parser did not consume entire stream."
+    _           -> error "Parser error."
+
+item :: Parser Char
+item = Parser $ \s ->
+  case s of
+   []     -> []
+   (c:cs) -> [(c,cs)]
+
+bind :: Parser a -> (a -> Parser b) -> Parser b
+bind p f = Parser $ \s -> concatMap (\(a, s') -> parse (f a) s') $ parse p s
+
+unit :: a -> Parser a
+unit a = Parser (\s -> [(a,s)])
+
+instance Functor Parser where
+  fmap f (Parser cs) = Parser (\s -> [(f a, b) | (a, b) <- cs s])
+
+instance Applicative Parser where
+  pure = return
+  (Parser cs1) <*> (Parser cs2) = Parser (\s -> [(f a, s2) | (f, s1) <- cs1 s, (a, s2) <- cs2 s1])
+
+instance Monad Parser where
+  return = unit
+  (>>=)  = bind
+
+instance MonadPlus Parser where
+  mzero = failure
+  mplus = combine
+
+instance Alternative Parser where
+  empty = mzero
+  (<|>) = option
+
+combine :: Parser a -> Parser a -> Parser a
+combine p q = Parser (\s -> parse p s ++ parse q s)
+
+failure :: Parser a
+failure = Parser (\cs -> [])
+
+option :: Parser a -> Parser a -> Parser a
+option  p q = Parser $ \s ->
+  case parse p s of
+    []     -> parse q s
+    res    -> res
+
+satisfy :: (Char -> Bool) -> Parser Char
+satisfy p = item `bind` \c ->
+  if p c
+  then unit c
+  else (Parser (\cs -> []))
+
+oneOf :: [Char] -> Parser Char
+oneOf s = satisfy (flip elem s)
+
+chainl :: Parser a -> Parser (a -> a -> a) -> a -> Parser a
+chainl p op a = (p `chainl1` op) <|> return a
+
+chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
+p `chainl1` op = do {a <- p; rest a}
+  where rest a = (do f <- op
+                     b <- p
+                     rest (f a b))
+                 <|> return a
 
 
-stripComments :: [String] -> [String]
---stripComments x = catMaybes (map uncomment x)
-stripComments [] = []
-stripComments x = lines (scanComments (unlines x))
+char :: Char -> Parser Char
+char c = satisfy (c ==)
 
-scanComments :: String -> String
-scanComments [] = []
-scanComments [x] = [x]
-scanComments "--" = []
-scanComments "-{" = undefined
-scanComments "-}" = undefined
-scanComments [x,y] = [x,y] -- two characters could be a comment
-scanComments x
-  | a == '-' && b == '-' && c /= '>' = inComments ([c]++xs)
-  | a == '|' && b == '-' && c == '-' = [a,b,c] ++ scanComments xs
-  | a == '{' && b == '-' = inMultiComments ([c] ++ xs) False
-  | otherwise = [a] ++ (scanComments ([b,c] ++ xs))
-  where
-  a = head x
-  b = head (tail x)
-  c = head (tail (tail x))
-  xs = tail (tail (tail x))
+natural :: Parser Integer
+natural = read <$> some (satisfy isDigit)
 
-inComments :: String -> String
-inComments [] = []  --This should produce an error
-inComments (x:xs)
-  | x =='\n' = scanComments xs
-  | otherwise = inComments xs
+string :: String -> Parser String
+string [] = return []
+string (c:cs) = do { char c; string cs; return (c:cs)}
 
-inMultiComments :: String -> Bool -> String
-inMultiComments [] _ = undefined  --This should produce an error
-inMultiComments [x] _ = undefined --This is also an error
-inMultiComments (a:b:xs) isMultiLine
-  | a == '-' && b == '}' && isMultiLine = scanComments (['\n'] ++ xs)
-  | a == '-' && b == '}' = scanComments (xs)
-  | a == '\n' = inMultiComments ([b] ++ xs) True
-  | otherwise = inMultiComments ([b] ++ xs) isMultiLine
+token :: Parser a -> Parser a
+token p = do { a <- p; spaces ; return a}
 
+reserved :: String -> Parser String
+reserved s = token (string s)
 
-uncomment :: String -> Maybe String
-uncomment x = case (isComment x) of
-  True -> Nothing
-  False -> Just x
+spaces :: Parser String
+spaces = many $ oneOf " \n\r"
 
-isComment :: String -> Bool
-isComment x
-  | a == '-' && b == '-' = True
-  | isSpace(a) = isComment ([b]++xs)
-  | otherwise = False
-  where
-  a = head x
-  b = head (tail x)
-  xs = tail (tail x)
+digit :: Parser Char
+digit = satisfy isDigit
 
-removeComments :: ([String],Bool) -> ([String],Bool)
-removeComments ((line:lines),inBlock)
-  | a == '-' && b == ' ' = ([],False)
-  | otherwise = ([],False)
-    where
-    a = head line
-    b = head (tail line)
-    xs = tail (tail line)
+number :: Parser Int
+number = do
+  s <- string "-" <|> return []
+  cs <- some digit
+  return $ read (s ++ cs)
+
+parens :: Parser a -> Parser a
+parens m = do
+  reserved "("
+  n <- m
+  reserved ")"
+  return n
+
+data Expr
+  = Add Expr Expr
+  | Mul Expr Expr
+  | Sub Expr Expr
+  | Lit Int
+  deriving Show
+
+eval :: Expr -> Int
+eval ex = case ex of
+  Add a b -> eval a + eval b
+  Mul a b -> eval a * eval b
+  Sub a b -> eval a - eval b
+  Lit n   -> n
+
+int :: Parser Expr
+int = do
+  n <- number
+  return (Lit n)
+
+expr :: Parser Expr
+expr = term `chainl1` addop
+
+term :: Parser Expr
+term = factor `chainl1` mulop
+
+factor :: Parser Expr
+factor =
+      int
+  <|> parens expr
+
+infixOp :: String -> (a -> a -> a) -> Parser (a -> a -> a)
+infixOp x f = reserved x >> return f
+
+addop :: Parser (Expr -> Expr -> Expr)
+addop = (infixOp "+" Add) <|> (infixOp "-" Sub)
+
+mulop :: Parser (Expr -> Expr -> Expr)
+mulop = infixOp "*" Mul
+
+run :: String -> Expr
+run = runParser expr
