@@ -122,6 +122,7 @@ data Expr
   | Mul Expr Expr
   | Sub Expr Expr
   | Lit Int
+  | Comment Expr Expr
   deriving Show
 
 eval :: Expr -> Int
@@ -129,6 +130,7 @@ eval ex = case ex of
   Add a b -> eval a + eval b
   Mul a b -> eval a * eval b
   Sub a b -> eval a - eval b
+  Comment a b -> eval b
   Lit n   -> n
 
 int :: Parser Expr
@@ -155,6 +157,8 @@ addop = (infixOp "+" Add) <|> (infixOp "-" Sub)
 
 mulop :: Parser (Expr -> Expr -> Expr)
 mulop = infixOp "*" Mul
+
+
 
 run :: String -> Expr
 run = runParser expr
