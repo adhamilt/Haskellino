@@ -13,7 +13,7 @@ main :: IO ()
 main = do
   [filename] <- getArgs
   s <- readFile filename
-  printout (parse (lines s))
+  printout (parse s)
 
 
 printout :: [String] -> IO ()
