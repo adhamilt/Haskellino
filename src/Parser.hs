@@ -8,43 +8,24 @@ import Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token as Token
 
 
-parse :: String -> [String]
-parse x = [x]
+parser :: String -> Either ParseError [[String]]
+parser input = parse expression "(unknown)" input
 
-languageDef =
-   emptyDef { Token.commentStart    = "/*"
-           , Token.commentEnd      = "*/"
-           , Token.commentLine     = "//"
-           , Token.identStart      = letter
-           , Token.identLetter     = alphaNum
-           , Token.reservedNames   = [ "Integer"
-                                     ]
-           , Token.reservedOpNames = ["+", "-", "=","::", "->"
-                                     ]
-           }
+expression :: Parser [[String]]
+expression = endBy1 statement eof
 
-lexer :: Token.TokenParser ()
-lexer = Token.makeTokenParser languageDef
+statement :: Parser [String]
+statement = sepBy1 line (eol)
 
+line :: Parser String
+line =  many1 (noneOf "\n\r")
 
-identifier :: Parser String
-identifier = Token.identifier lexer
-
-reserved :: String -> Parser ()
-reserved = Token.reserved lexer
-
-reservedOp :: String -> Parser ()
-reservedOp = Token.reservedOp lexer
-
-parens :: Parser a -> Parser a
-parens = Token.parens lexer
-
-integer :: Parser Integer
-integer = Token.integer lexer
-
-whiteSpace :: Parser ()
-whiteSpace = Token.whiteSpace lexer
-
+eol :: Parser String
+eol =   try (string "\n\r")
+    <|> try (string "\r\n")
+    <|> try (string "\n")
+    <|> try (string "\r")
+    <?> "end of line"
 
 
 data Type = Typename String
@@ -66,18 +47,7 @@ data FunctionExpr = FunctionDef String [Type] Type
                   | FunctionBody [String] ArithmeticExpr
                     deriving (Show)
 
-data Statement = Seq [Statement]
+data Expression = Seq [Expression]
           | Assign String ArithmeticExpr
           | Skip
             deriving (Show)
-
-{-
-whileParser :: Parser Statement
-whileParser = whiteSpace >> statement
-
-
-statement :: Parser Statement
-statement = parens statement
-          <|> sequenceOfStatements
-
--}
